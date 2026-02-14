@@ -1,6 +1,6 @@
 # git-lrc
 
-**Check AI-Generated Code With Git Hooks**
+**Free, Unlimited AI Code Reviews That Run on Commit**
 
 AI agents write code fast. They also *silently remove logic*, change behavior, and introduce bugs -- without telling you. You often find out in production.
 
