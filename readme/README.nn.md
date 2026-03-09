@@ -1,5 +1,11 @@
 <div align="center">
 
+[🇬🇧 English](../README.md)
+
+</div>
+
+<div align="center">
+
 <img width="60" alt="git-lrc logo" src="https://hexmos.com/freedevtools/public/lr_logo.svg" />
 
 <strong style="font-size:2em; display:block; margin:0.67em 0;">git-lrc</strong>
