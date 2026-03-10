@@ -1542,20 +1542,20 @@ func runGitCommand(args ...string) ([]byte, error) {
 	return output, nil
 }
 
-// runCommitAndMaybePush commits the staged changes (bypassing hooks) and optionally pushes with safety checks.
+// runCommitAndMaybePush commits the staged changes and optionally pushes with safety checks.
 func runCommitAndMaybePush(message string, push bool, verbose bool) error {
 	msg := strings.TrimSpace(message)
 	if msg == "" {
 		return fmt.Errorf("commit message cannot be empty")
 	}
 
-	commitCmd := exec.Command("git", "commit", "--no-verify", "-m", msg)
+	commitCmd := exec.Command("git", "commit", "-m", msg)
 	commitCmd.Stdout = os.Stdout
 	commitCmd.Stderr = os.Stderr
-	// Set env var to prevent hook recursion (prepare-commit-msg still runs with --no-verify)
+	// Set env var to prevent hook recursion in prepare-commit-msg.
 	commitCmd.Env = append(os.Environ(), "LRC_SKIP_REVIEW=1")
 	if verbose {
-		log.Printf("Running git commit (no-verify, LRC_SKIP_REVIEW=1)")
+		log.Printf("Running git commit (LRC_SKIP_REVIEW=1)")
 	}
 	if err := commitCmd.Run(); err != nil {
 		return fmt.Errorf("git commit failed: %w", err)
