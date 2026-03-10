@@ -90,6 +90,12 @@ func handleCtrlKeyWithCancel(stop <-chan struct{}) (int, error) {
 			case ctrlVKey: // Ctrl-V (SYN)
 				codeChan <- decisionVouch
 				return
+			case 's', 'S': // Fallback for terminals that intercept Ctrl-S
+				codeChan <- decisionSkip
+				return
+			case 'v', 'V': // Fallback for terminals that intercept Ctrl-V
+				codeChan <- decisionVouch
+				return
 			}
 		}
 	}()

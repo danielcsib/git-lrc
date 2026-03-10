@@ -49,11 +49,10 @@ var (
 
 // Decision codes for interactive review flow.
 const (
-	decisionCommit  = 0 // proceed with commit
-	decisionAbort   = 1 // abort commit
-	decisionSkip    = 2 // skip review, proceed with commit
-	decisionSkipWeb = 3 // skip requested from web UI, abort commit
-	decisionVouch   = 4 // vouch for changes, proceed with commit
+	decisionCommit = 0 // proceed with commit
+	decisionAbort  = 1 // abort commit
+	decisionSkip   = 2 // skip review, proceed with commit
+	decisionVouch  = 4 // vouch for changes, proceed with commit
 )
 
 // diffReviewRequest models the POST payload to /api/v1/diff-review
@@ -978,7 +977,18 @@ func runReviewWithOptions(opts reviewOptions) error {
 					w.WriteHeader(http.StatusMethodNotAllowed)
 					return
 				}
-				progressiveDecide(decisionSkipWeb, "", false)
+				msg := readCommitMessageFromRequest(r)
+				progressiveDecide(decisionSkip, msg, false)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok"))
+			})
+			mux.HandleFunc("/vouch", func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				msg := readCommitMessageFromRequest(r)
+				progressiveDecide(decisionVouch, msg, false)
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("ok"))
 			})
@@ -1094,6 +1104,7 @@ func runReviewWithOptions(opts reviewOptions) error {
 	if useInteractive {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigChan)
 
 		decisionChan := make(chan int, 1)
 		stopCtrlS := make(chan struct{})
@@ -1184,31 +1195,14 @@ func runReviewWithOptions(opts reviewOptions) error {
 
 		// If a decision happened before we proceed, act now
 		if decisionCode != -1 {
-			switch decisionCode {
-			case decisionAbort:
-				fmt.Println("\n❌ Review and commit aborted by user")
-				fmt.Println()
-				return cli.Exit("", decisionAbort)
-			case decisionSkip:
-				fmt.Println("\n⏭️  Review skipped, proceeding with commit")
-				if err := ensureAttestation("skipped", verbose, &attestationWritten); err != nil {
-					return err
-				}
-				fmt.Println()
-				return cli.Exit("", decisionSkip)
-			case decisionSkipWeb:
-				fmt.Println("\n⏭️  Skip requested from review page; aborting commit")
-				fmt.Println()
-				return cli.Exit("", decisionSkipWeb)
-			case decisionVouch:
-				fmt.Println("\n✅ Vouched — proceeding with commit")
-				if err := recordCoverageAndAttest("vouched", diffContent, reviewID, verbose, &attestationWritten); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: vouch failed: %v\n", err)
-					return cli.Exit("", decisionAbort)
-				}
-				fmt.Println()
-				return cli.Exit("", decisionSkip) // exit code 2: proceed with commit
-			}
+			return executeDecision(decisionCode, initialMsg, false, decisionExecutionContext{
+				precommit:          opts.precommit,
+				verbose:            verbose,
+				initialMsg:         initialMsg,
+				diffContent:        diffContent,
+				reviewID:           reviewID,
+				attestationWritten: &attestationWritten,
+			})
 		}
 	}
 
@@ -1303,6 +1297,7 @@ func runReviewWithOptions(opts reviewOptions) error {
 				// Set up terminal input handlers that call progressiveDecide
 				sigChan := make(chan os.Signal, 1)
 				signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+				defer signal.Stop(sigChan)
 
 				go func() {
 					<-sigChan
@@ -1310,13 +1305,23 @@ func runReviewWithOptions(opts reviewOptions) error {
 				}()
 
 				go func() {
+					stopKeys := make(chan struct{})
+					go func() {
+						code, err := handleCtrlKeyWithCancel(stopKeys)
+						if err == nil && code != 0 {
+							progressiveDecide(code, "", false)
+						}
+					}()
+
 					tty, err := openTTY()
 					if err != nil {
 						// Cannot open terminal (e.g. no console attached).
 						// Don't abort — let the web UI buttons be the decision source.
+						close(stopKeys)
 						return
 					}
 					defer tty.Close()
+					defer close(stopKeys)
 
 					// Prompt for commit message if empty
 					msg := initialMsg
@@ -1345,39 +1350,27 @@ func runReviewWithOptions(opts reviewOptions) error {
 
 				// Wait for decision from either HTTP endpoint or terminal
 				decision := <-progressiveDecisionChan
-
-				if opts.precommit {
-					return cli.Exit("", decision.code)
-				}
-
-				switch decision.code {
-				case decisionAbort:
-					fmt.Println("\n❌ Commit aborted by user")
-					return cli.Exit("", decision.code)
-				case decisionCommit:
-					finalMsg := strings.TrimSpace(decision.message)
-					if finalMsg == "" {
-						finalMsg = strings.TrimSpace(initialMsg)
-					}
-					if finalMsg == "" {
-						return fmt.Errorf("commit message is required for commit/commit+push")
-					}
-					if err := runCommitAndMaybePush(finalMsg, decision.push, verbose); err != nil {
-						return err
-					}
-					return nil
-				}
+				return executeDecision(decision.code, decision.message, decision.push, decisionExecutionContext{
+					precommit:          opts.precommit,
+					verbose:            verbose,
+					initialMsg:         initialMsg,
+					diffContent:        diffContent,
+					reviewID:           reviewID,
+					attestationWritten: &attestationWritten,
+				})
 			} else {
 				// No progressive loading - use normal serveHTMLInteractive
 				code, msg, push, err := serveHTMLInteractive(htmlPath, opts.port, nonProgressiveListener, initialMsg, false)
 				if err != nil {
 					return err
 				}
+				code = normalizeDecisionCode(code)
 
 				if opts.precommit {
+					exitCode := precommitExitCodeForDecision(code)
 					// Hook path: persist commit message/push request for downstream hooks and exit with hook code
 					if commitMsgPath != "" {
-						if code == 0 {
+						if exitCode == decisionCommit {
 							msgToPersist := msg
 							if strings.TrimSpace(msgToPersist) == "" {
 								msgToPersist = initialMsg
@@ -1395,7 +1388,7 @@ func runReviewWithOptions(opts reviewOptions) error {
 						}
 					}
 
-					if code == 0 && push {
+					if exitCode == decisionCommit && push {
 						if err := persistPushRequest(commitMsgPath); err != nil {
 							fmt.Fprintf(os.Stderr, "Warning: failed to store push request: %v\n", err)
 						}
@@ -1403,31 +1396,18 @@ func runReviewWithOptions(opts reviewOptions) error {
 						_ = clearPushRequest(commitMsgPath)
 					}
 
-					return cli.Exit("", code)
+					return cli.Exit("", exitCode)
 				}
 
 				// Non-hook interactive: execute commit (and optional push) directly
-				switch code {
-				case 1:
-					return cli.Exit("", code)
-				case 2:
-					// Skip review but proceed with commit: honor skip by writing attestation already handled above; no commit performed here.
-					return nil
-				case 3:
-					return cli.Exit("", code)
-				case 0:
-					finalMsg := strings.TrimSpace(msg)
-					if finalMsg == "" {
-						finalMsg = strings.TrimSpace(initialMsg)
-					}
-					if finalMsg == "" {
-						return fmt.Errorf("commit message is required for commit/commit+push")
-					}
-					if err := runCommitAndMaybePush(finalMsg, push, verbose); err != nil {
-						return err
-					}
-					return nil
-				}
+				return executeDecision(code, msg, push, decisionExecutionContext{
+					precommit:          false,
+					verbose:            verbose,
+					initialMsg:         initialMsg,
+					diffContent:        diffContent,
+					reviewID:           reviewID,
+					attestationWritten: &attestationWritten,
+				})
 			}
 		}
 
@@ -1449,6 +1429,7 @@ func runReviewWithOptions(opts reviewOptions) error {
 			fmt.Printf("   Press Ctrl-C to exit.\n\n")
 			sigChan := make(chan os.Signal, 1)
 			signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(sigChan)
 			<-sigChan
 			fmt.Println("\nExiting...")
 			return nil
@@ -1545,17 +1526,32 @@ func runGitCommand(args ...string) ([]byte, error) {
 // runCommitAndMaybePush commits the staged changes and optionally pushes with safety checks.
 func runCommitAndMaybePush(message string, push bool, verbose bool) error {
 	msg := strings.TrimSpace(message)
-	if msg == "" {
-		return fmt.Errorf("commit message cannot be empty")
+	commitArgs := []string{"commit"}
+	if msg != "" {
+		commitArgs = append(commitArgs, "-m", msg)
 	}
 
-	commitCmd := exec.Command("git", "commit", "-m", msg)
+	commitCmd := exec.Command("git", commitArgs...)
+	if msg == "" {
+		// Let git launch the standard editor interactively when no -m is provided.
+		commitCmd.Stdin = os.Stdin
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			if tty, err := openTTY(); err == nil {
+				defer tty.Close()
+				commitCmd.Stdin = tty
+			}
+		}
+	}
 	commitCmd.Stdout = os.Stdout
 	commitCmd.Stderr = os.Stderr
 	// Set env var to prevent hook recursion in prepare-commit-msg.
 	commitCmd.Env = append(os.Environ(), "LRC_SKIP_REVIEW=1")
 	if verbose {
-		log.Printf("Running git commit (LRC_SKIP_REVIEW=1)")
+		if msg == "" {
+			log.Printf("Running git commit (editor/default message, LRC_SKIP_REVIEW=1)")
+		} else {
+			log.Printf("Running git commit (LRC_SKIP_REVIEW=1)")
+		}
 	}
 	if err := commitCmd.Run(); err != nil {
 		return fmt.Errorf("git commit failed: %w", err)
@@ -2876,7 +2872,19 @@ func serveHTMLInteractive(htmlPath string, port int, ln net.Listener, initialMsg
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		decide(decisionSkipWeb, "", false)
+		msg := readCommitMessageFromRequest(r)
+		decide(decisionSkip, msg, false)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/vouch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		msg := readCommitMessageFromRequest(r)
+		decide(decisionVouch, msg, false)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -2905,10 +2913,21 @@ func serveHTMLInteractive(htmlPath string, port int, ln net.Listener, initialMsg
 	// Set up signal handling for Ctrl-C
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 	go func() {
 		<-sigChan
 		decide(1, "", false)
 	}()
+
+	stopKeys := make(chan struct{})
+	go func() {
+		code, err := handleCtrlKeyWithCancel(stopKeys)
+		if err == nil && code != 0 {
+			decide(code, "", false)
+		}
+	}()
+
+	defer close(stopKeys)
 
 	// Read from terminal directly to avoid stdin issues in git hooks (Enter fallback, cooked mode)
 	go func() {
@@ -2925,6 +2944,8 @@ func serveHTMLInteractive(htmlPath string, port int, ln net.Listener, initialMsg
 
 		fmt.Printf("📋 Review complete. Choose action:\n")
 		fmt.Printf("   [Enter]  Continue with commit\n")
+		fmt.Printf("   [Ctrl-S] Skip review and commit\n")
+		fmt.Printf("   [Ctrl-V] Vouch and commit\n")
 		fmt.Printf("   [Ctrl-C] Abort commit\n")
 		fmt.Printf("\nOptional: type a new commit message and press Enter to use it (leave blank to keep Git's message).\n")
 		if strings.TrimSpace(initialMsg) != "" {
@@ -2959,9 +2980,9 @@ func serveHTMLInteractive(htmlPath string, port int, ln net.Listener, initialMsg
 	case decisionCommit:
 		fmt.Println("\n✅ Proceeding with commit")
 	case decisionSkip:
-		fmt.Println("\n⏭️  Review skipped from terminal; proceeding with commit")
-	case decisionSkipWeb:
-		fmt.Println("\n⏭️  Skip requested from review page; aborting commit")
+		fmt.Println("\n⏭️  Review skipped, proceeding with commit")
+	case decisionVouch:
+		fmt.Println("\n✅ Vouched, proceeding with commit")
 	case decisionAbort:
 		fmt.Println("\n❌ Commit aborted by user")
 	}

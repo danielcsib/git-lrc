@@ -107,6 +107,16 @@ export async function createPrecommitBar() {
                             </svg>
                             Skip
                         </button>
+                        <button 
+                            class="btn btn-ghost"
+                            disabled=${disabled}
+                            onClick=${() => postDecision('/vouch', 'Vouch requested', false)}
+                        >
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            Vouch
+                        </button>
                     </div>
                     <div class="precommit-status">${status}</div>
                 </div>
@@ -122,7 +132,7 @@ export async function createPrecommitBar() {
                             userHasTyped.current = true;
                         }}
                     ></textarea>
-                    <div class="precommit-message-hint">Required for commit actions; ignored on Skip.</div>
+                    <div class="precommit-message-hint">Required for Commit/Commit & Push. Optional for Skip and Vouch.</div>
                 </div>
             </div>
         `;
