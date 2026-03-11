@@ -19,7 +19,7 @@
 
 <br />
 
-<center>
+<div align="center">
 <a href="https://goreportcard.com/report/github.com/HexmosTech/git-lrc" target="_blank" rel="noopener noreferrer"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/HexmosTech/git-lrc"></a>
 <br />
 <br />
