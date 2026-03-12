@@ -23,7 +23,7 @@
 <a href="https://fazier.com/launches/git-lrc" target="_blank" rel="noopener noreferrer"><img src="https://fazier.com/api/v1/public/badges/embed_image.svg?launch_id=7598&amp;badge_type=daily&amp;theme=light" width="200" alt="Fazier badge" /></a>
 
 <br />
-<a href="https://goreportcard.com/report/github.com/HexmosTech/git-lrc" target="_blank" rel="noopener noreferrer"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/HexmosTech/git-lrc"></a>
+<a href="https://goreportcard.com/report/github.com/HexmosTech/git-lrc" target="_blank" rel="noopener noreferrer"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/HexmosTech/git-lrc"></a>&nbsp;<a href="https://github.com/HexmosTech/git-lrc/actions/workflows/gitleaks.yml" target="_blank" rel="noopener noreferrer"><img alt="gitleaks" src="https://github.com/HexmosTech/git-lrc/actions/workflows/gitleaks.yml/badge.svg"></a>&nbsp;<a href="https://github.com/HexmosTech/git-lrc/actions/workflows/osv-scanner.yml" target="_blank" rel="noopener noreferrer"><img alt="osv-scanner" src="https://github.com/HexmosTech/git-lrc/actions/workflows/osv-scanner.yml/badge.svg"></a>&nbsp;<a href="https://github.com/HexmosTech/git-lrc/actions/workflows/govulncheck.yml" target="_blank" rel="noopener noreferrer"><img alt="govulncheck" src="https://github.com/HexmosTech/git-lrc/actions/workflows/govulncheck.yml/badge.svg"></a>
 </div>
 
 <br />
