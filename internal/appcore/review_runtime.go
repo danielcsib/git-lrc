@@ -56,6 +56,44 @@ func newRuntimeHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+func liveReviewAuthFailureError(apiURL, technicalDetails string) error {
+	technical := strings.TrimSpace(technicalDetails)
+	if technical == "" {
+		technical = "(empty response body)"
+	}
+
+	return fmt.Errorf("LiveReview authentication failed for review submission.\n\nNext steps:\n  1. Run: lrc ui\n  2. Login or re-authenticate\n  3. Retry: git lrc\n\nThis is LiveReview review-submission authentication, not your AI connector provider key.\n\nTechnical details:\nAPI URL: %s\n%s", apiURL, technical)
+}
+
+func formatLiveReviewTechnicalDetails(rawBody string) string {
+	trimmed := strings.TrimSpace(rawBody)
+	if trimmed == "" {
+		return "(empty response body)"
+	}
+
+	var payload struct {
+		Error     string `json:"error"`
+		ErrorCode string `json:"error_code"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return trimmed
+	}
+
+	var lines []string
+	if strings.TrimSpace(payload.ErrorCode) != "" {
+		lines = append(lines, fmt.Sprintf("error_code: %s", payload.ErrorCode))
+	}
+	if strings.TrimSpace(payload.Error) != "" {
+		lines = append(lines, fmt.Sprintf("error: %s", payload.Error))
+	}
+	if len(lines) == 0 {
+		return trimmed
+	}
+
+	lines = append(lines, fmt.Sprintf("raw_response: %s", trimmed))
+	return strings.Join(lines, "\n")
+}
+
 func runReviewWithOptions(opts reviewopts.Options) error {
 	verbose := opts.Verbose
 	defer func() {
@@ -273,6 +311,9 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 	if err != nil {
 		// Handle 413 Request Entity Too Large - prompt user to skip if interactive
 		var apiErr *reviewmodel.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {
+			return liveReviewAuthFailureError(config.APIURL, apiErr.Body)
+		}
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusRequestEntityTooLarge {
 			isInteractive := term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 			if isInteractive {
@@ -602,6 +643,10 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 			result, pollErr = reviewapi.PollReview(config.APIURL, config.APIKey, reviewID, opts.PollInterval, opts.Timeout, verbose, nil)
 		}
 		if pollErr != nil {
+			var apiErr *reviewmodel.APIError
+			if errors.As(pollErr, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {
+				return liveReviewAuthFailureError(config.APIURL, formatLiveReviewTechnicalDetails(apiErr.Body))
+			}
 			// If progressive loading is active, don't crash - keep server running to show error
 			if progressiveLoadingActive {
 				fmt.Printf("\n⚠️  Review failed: %v\n", pollErr)
@@ -721,8 +766,18 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 				}
 				// If progressive loading is active, don't crash - let server keep running to show error
 				if progressiveLoadingActive {
-					syncedPrintf("\n⚠️  Review failed: %v\n", pollErr)
-					syncedPrintf("   Error details available in browser at: http://localhost:%d\n\n", opts.Port)
+					var apiErr *reviewmodel.APIError
+					if errors.As(pollErr, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {
+						syncedPrintf("\n⚠️  LiveReview authentication failed for review updates.\n")
+						syncedPrintf("   Run: lrc ui\n")
+						syncedPrintf("   Login or re-authenticate, then retry: git lrc\n")
+						syncedPrintf("   This is LiveReview review-submission authentication, not your AI connector provider key.\n")
+						syncedPrintf("\nTechnical details:\n")
+						syncedPrintf("%s\n\n", formatLiveReviewTechnicalDetails(apiErr.Body))
+					} else {
+						syncedPrintf("\n⚠️  Review failed: %v\n", pollErr)
+						syncedPrintf("   Error details available in browser at: http://localhost:%d\n\n", opts.Port)
+					}
 					// Create empty result - error will be delivered via completion event, not in Summary
 					result = &reviewmodel.DiffReviewResponse{
 						Status:  "failed",
@@ -736,6 +791,10 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 					}
 					reviewStateMu.Unlock()
 				} else {
+					var apiErr *reviewmodel.APIError
+					if errors.As(pollErr, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized {
+						return liveReviewAuthFailureError(config.APIURL, formatLiveReviewTechnicalDetails(apiErr.Body))
+					}
 					if reviewURL != "" {
 						return fmt.Errorf("failed to poll review (see %s): %w", reviewURL, pollErr)
 					}

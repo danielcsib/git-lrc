@@ -249,7 +249,7 @@ func PollReview(apiURL, apiKey, reviewID string, pollInterval, timeout time.Dura
 		contentType := resp.Header.Get("Content-Type")
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+			return nil, &reviewmodel.APIError{StatusCode: resp.StatusCode, Body: string(body)}
 		}
 
 		var result reviewmodel.DiffReviewResponse
