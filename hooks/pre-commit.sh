@@ -17,7 +17,7 @@ fi
 
 # Detect interactive terminal (stdout check; git redirects stdin)
 if [ -t 1 ]; then
-	echo "LiveReview pre-commit: interactive environment detected; no-op"
+	echo "LiveReview pre-commit: interactive environment detected; no-op" >&2
 	exit 0
 fi
 

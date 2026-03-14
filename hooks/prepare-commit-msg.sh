@@ -112,8 +112,7 @@ fi
 
 # Run review
 if [ "$LRC_INTERACTIVE" = "1" ]; then
-	echo "Running LiveReview commit check..."
-	exec 2>&1
+	echo "Running LiveReview commit check..." >&2
 	LRC_INITIAL_MESSAGE_FILE="$INITIAL_MSG_FILE" lrc review --staged --precommit
 	REVIEW_EXIT=$?
 else
