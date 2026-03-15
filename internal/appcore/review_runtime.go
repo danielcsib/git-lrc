@@ -34,6 +34,8 @@ import (
 	"github.com/HexmosTech/git-lrc/internal/reviewopts"
 	"github.com/HexmosTech/git-lrc/internal/selfupdate"
 	"github.com/HexmosTech/git-lrc/internal/staticserve"
+	"github.com/HexmosTech/git-lrc/network"
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
@@ -569,10 +571,7 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 				}
 
 				// Forward request to backend API with authentication
-				backendURL := config.APIURL + r.URL.Path
-				if r.URL.RawQuery != "" {
-					backendURL += "?" + r.URL.RawQuery
-				}
+				backendURL := network.ReviewProxyRequestURL(config.APIURL, r.URL.Path, r.URL.RawQuery)
 
 				if verbose {
 					log.Printf("Proxying %s request to: %s", r.Method, backendURL)
@@ -580,15 +579,23 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 				}
 
 				// Forward the actual HTTP method (GET, POST, PUT, etc)
-				req, err := http.NewRequest(r.Method, backendURL, r.Body)
-				if err != nil {
-					http.Error(w, "Failed to create request", http.StatusInternalServerError)
-					return
+				var reqBody []byte
+				if r.Body != nil {
+					const maxProxyBodyBytes = 8 << 20 // 8 MiB
+					readBody, readErr := io.ReadAll(io.LimitReader(r.Body, maxProxyBodyBytes+1))
+					if readErr != nil {
+						http.Error(w, "Failed to read request body", http.StatusBadRequest)
+						return
+					}
+					if len(readBody) > maxProxyBodyBytes {
+						http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+						return
+					}
+					reqBody = readBody
 				}
-				req.Header.Set("X-API-Key", config.APIKey)
 
-				client := newRuntimeHTTPClient(10 * time.Second)
-				resp, err := client.Do(req)
+				client := network.NewReviewProxyClient(10 * time.Second)
+				resp, err := network.ReviewProxyRequest(client, r.Method, config.APIURL, r.URL.Path, r.URL.RawQuery, reqBody, config.APIKey)
 				if err != nil {
 					if verbose {
 						log.Printf("Proxy error: %v", err)
@@ -596,8 +603,6 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 					http.Error(w, "Failed to fetch events", http.StatusBadGateway)
 					return
 				}
-				defer resp.Body.Close()
-
 				if verbose {
 					log.Printf("Backend response status: %d", resp.StatusCode)
 				}
@@ -611,14 +616,10 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 				w.WriteHeader(resp.StatusCode)
 
 				// Copy response body
-				bodyBytes, err := io.ReadAll(resp.Body)
-				if err != nil && verbose {
-					log.Printf("Error reading response: %v", err)
-				}
 				if verbose && resp.StatusCode != 200 {
-					log.Printf("Error response body: %s", string(bodyBytes))
+					log.Printf("Error response body: %s", string(resp.Body))
 				}
-				if _, err := io.Copy(w, bytes.NewReader(bodyBytes)); err != nil && verbose {
+				if _, err := io.Copy(w, bytes.NewReader(resp.Body)); err != nil && verbose {
 					log.Printf("failed to write proxy response body: %v", err)
 				}
 			})
@@ -841,7 +842,7 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 	// Clean up temp HTML file on exit
 	if tempHTMLPath != "" {
 		defer func() {
-			if err := os.Remove(tempHTMLPath); err == nil {
+			if err := storage.RemoveTempHTMLFile(tempHTMLPath); err == nil {
 				if verbose {
 					log.Printf("Removed temporary HTML file: %s", tempHTMLPath)
 				}
@@ -1114,7 +1115,7 @@ func collectDiffWithOptions(opts reviewopts.Options) ([]byte, error) {
 		if verbose {
 			log.Printf("Reading diff from file: %s", filePath)
 		}
-		return os.ReadFile(filePath)
+		return storage.ReadDiffFile(filePath)
 
 	default:
 		return nil, fmt.Errorf("invalid diff-source: %s (must be staged, working, commit, range, or file)", diffSource)
@@ -1397,7 +1398,7 @@ func saveBundleForInspection(path string, diffContent, zipData []byte, base64Dif
 	buf.WriteString(base64Diff)
 	buf.WriteString("\n")
 
-	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+	if err := storage.WriteFile(path, buf.Bytes(), 0644); err != nil {
 		return err
 	}
 
@@ -1415,7 +1416,7 @@ func saveJSONResponse(path string, result *reviewmodel.DiffReviewResponse, verbo
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := storage.WriteFile(path, data, 0644); err != nil {
 		return err
 	}
 
@@ -1487,7 +1488,7 @@ func saveTextOutput(path string, result *reviewmodel.DiffReviewResponse, verbose
 	buf.WriteString(fmt.Sprintf("END OF REVIEW - %d total comment(s)\n", totalComments))
 	buf.WriteString(strings.Repeat("=", 80) + "\n")
 
-	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+	if err := storage.WriteFile(path, buf.Bytes(), 0644); err != nil {
 		return err
 	}
 
@@ -1699,7 +1700,7 @@ func saveHTMLOutput(path string, result *reviewmodel.DiffReviewResponse, verbose
 	}
 
 	// Write to file
-	if err := os.WriteFile(path, []byte(htmlContent), 0644); err != nil {
+	if err := storage.WriteFile(path, []byte(htmlContent), 0644); err != nil {
 		return err
 	}
 
@@ -1863,7 +1864,7 @@ func persistCommitMessage(commitMsgPath, message string) error {
 	}
 
 	normalized := trimmed + "\n"
-	return os.WriteFile(commitMsgPath, []byte(normalized), 0600)
+	return storage.WriteFile(commitMsgPath, []byte(normalized), 0600)
 }
 
 // clearCommitMessageFile removes any pending commit-message override file.
@@ -1872,7 +1873,7 @@ func clearCommitMessageFile(commitMsgPath string) error {
 		return nil
 	}
 
-	if err := os.Remove(commitMsgPath); err != nil && !os.IsNotExist(err) {
+	if err := storage.RemoveCommitMessageOverrideFile(commitMsgPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
@@ -1886,7 +1887,7 @@ func persistPushRequest(commitMsgPath string) error {
 	}
 
 	pushPath := filepath.Join(filepath.Dir(commitMsgPath), pushRequestFile)
-	return os.WriteFile(pushPath, []byte("push"), 0600)
+	return storage.WriteFile(pushPath, []byte("push"), 0600)
 }
 
 // clearPushRequest removes any pending push request marker.
@@ -1896,7 +1897,7 @@ func clearPushRequest(commitMsgPath string) error {
 	}
 
 	pushPath := filepath.Join(filepath.Dir(commitMsgPath), pushRequestFile)
-	if err := os.Remove(pushPath); err != nil && !os.IsNotExist(err) {
+	if err := storage.RemoveCommitPushRequestFile(pushPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

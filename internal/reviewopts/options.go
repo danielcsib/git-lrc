@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/urfave/cli/v2"
 )
 
@@ -44,7 +45,7 @@ type Options struct {
 func BuildFromContext(c *cli.Context, includeDebug bool) (Options, error) {
 	initialMsg := ""
 	if msgFile := os.Getenv("LRC_INITIAL_MESSAGE_FILE"); msgFile != "" {
-		if data, err := os.ReadFile(msgFile); err == nil {
+		if data, err := storage.ReadInitialMessageFile(msgFile); err == nil {
 			initialMsg = strings.TrimRight(string(data), "\r\n")
 		}
 	} else {
@@ -129,7 +130,7 @@ func ApplyDefaultHTMLServe(opts *Options) (string, error) {
 	}
 
 	if opts.Serve {
-		tmpFile, err := os.CreateTemp("", "lrc-review-*.html")
+		tmpFile, err := storage.CreateTempReviewHTMLFile()
 		if err != nil {
 			return "", fmt.Errorf("failed to create temporary HTML file: %w", err)
 		}

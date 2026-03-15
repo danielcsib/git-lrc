@@ -2,13 +2,16 @@ package appui
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 
 	setuptpl "github.com/HexmosTech/git-lrc/setup"
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/urfave/cli/v2"
 )
 
@@ -74,7 +77,7 @@ func RunSetup(c *cli.Context) error {
 
 	printSetupSuccess(result)
 
-	if err := os.Remove(slog.logFile); err != nil && !os.IsNotExist(err) {
+	if err := storage.RemoveSetupLogFile(slog.logFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		slog.write("warning: could not remove log file: %v", err)
 	}
 	return nil

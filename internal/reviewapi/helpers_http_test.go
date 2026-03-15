@@ -5,10 +5,12 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/network"
 )
 
 func TestNewReviewHTTPClient_BlocksCrossHostRedirect(t *testing.T) {
-	client := newReviewHTTPClient(5 * time.Second)
+	client := network.NewHTTPClient(5 * time.Second)
 	if client.CheckRedirect == nil {
 		t.Fatal("expected CheckRedirect to be configured")
 	}
@@ -23,7 +25,7 @@ func TestNewReviewHTTPClient_BlocksCrossHostRedirect(t *testing.T) {
 }
 
 func TestNewReviewHTTPClient_AllowsSameHostRedirect(t *testing.T) {
-	client := newReviewHTTPClient(5 * time.Second)
+	client := network.NewHTTPClient(5 * time.Second)
 	if client.CheckRedirect == nil {
 		t.Fatal("expected CheckRedirect to be configured")
 	}

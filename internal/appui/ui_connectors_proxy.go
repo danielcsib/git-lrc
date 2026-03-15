@@ -1,17 +1,17 @@
 package appui
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/HexmosTech/git-lrc/network"
 )
 
 func (s *connectorManagerServer) proxyJSONRequest(method, apiPath string, payload []byte) (int, []byte, error) {
-	url := buildLiveReviewURL(s.cfg.APIURL, apiPath)
+	url := network.ReviewNormalizedAPIURL(s.cfg.APIURL, apiPath)
 
 	s.mu.Lock()
 	jwt := s.cfg.JWT
@@ -50,32 +50,12 @@ func (s *connectorManagerServer) proxyJSONRequest(method, apiPath string, payloa
 }
 
 func (s *connectorManagerServer) forwardJSONRequest(method, url string, payload []byte, jwt string, orgID string) (int, []byte, error) {
-	var bodyReader io.Reader
-	if payload != nil {
-		bodyReader = bytes.NewReader(payload)
-	}
-
-	req, err := http.NewRequest(method, url, bodyReader)
-	if err != nil {
-		return http.StatusInternalServerError, nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("X-Org-Context", orgID)
-
-	resp, err := s.client.Do(req)
+	resp, err := network.ReviewForwardJSONWithBearer(s.client, method, url, payload, jwt, orgID)
 	if err != nil {
 		return http.StatusBadGateway, nil, fmt.Errorf("failed to call LiveReview API: %w", err)
 	}
-	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return http.StatusBadGateway, nil, fmt.Errorf("failed to read LiveReview API response: %w", err)
-	}
-
-	return resp.StatusCode, respBody, nil
+	return resp.StatusCode, resp.Body, nil
 }
 
 func (s *connectorManagerServer) refreshAccessToken(failedJWT string) (bool, error) {
@@ -90,35 +70,23 @@ func (s *connectorManagerServer) refreshAccessToken(failedJWT string) (bool, err
 		return false, fmt.Errorf("refresh_token missing in %s", s.cfg.ConfigPath)
 	}
 
-	refreshURL := buildLiveReviewURL(s.cfg.APIURL, "/api/v1/auth/refresh")
+	refreshURL := network.ReviewNormalizedAPIURL(s.cfg.APIURL, "/api/v1/auth/refresh")
 	reqBody, err := json.Marshal(authRefreshRequest{RefreshToken: s.cfg.RefreshJWT})
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal refresh request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, refreshURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return false, fmt.Errorf("failed to create refresh request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
+	resp, err := s.client.Do(http.MethodPost, refreshURL, reqBody, map[string]string{"Content-Type": "application/json"})
 	if err != nil {
 		return false, fmt.Errorf("refresh request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, fmt.Errorf("failed to read refresh response: %w", err)
-	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(resp.Body)))
 	}
 
 	var refreshResp authRefreshResponse
-	if err := json.Unmarshal(body, &refreshResp); err != nil {
+	if err := json.Unmarshal(resp.Body, &refreshResp); err != nil {
 		return false, fmt.Errorf("failed to decode refresh response: %w", err)
 	}
 

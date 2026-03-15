@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 const (
@@ -102,7 +104,7 @@ func (sl *setupLog) write(format string, args ...interface{}) {
 
 func (sl *setupLog) flush() {
 	content := strings.Join(sl.entries, "\n") + "\n"
-	if err := os.WriteFile(sl.logFile, []byte(content), 0600); err != nil {
+	if err := storage.WriteFile(sl.logFile, []byte(content), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: could not write debug log to %s: %v\n", sl.logFile, err)
 	}
 }

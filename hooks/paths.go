@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // Meta tracks hook path ownership so uninstall can restore prior state.
@@ -70,18 +72,24 @@ func MetaPath(hooksPath, metaFilename string) string {
 	return filepath.Join(hooksPath, metaFilename)
 }
 
-func WriteMeta(hooksPath, metaFilename string, meta Meta) {
+func WriteMeta(hooksPath, metaFilename string, meta Meta) error {
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 
-	_ = os.MkdirAll(hooksPath, 0755)
-	_ = os.WriteFile(MetaPath(hooksPath, metaFilename), data, 0644)
+	if err := storage.EnsureHooksPathDir(hooksPath); err != nil {
+		return err
+	}
+	if err := storage.WriteFile(MetaPath(hooksPath, metaFilename), data, 0644); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func ReadMeta(hooksPath, metaFilename string) (*Meta, error) {
-	data, err := os.ReadFile(MetaPath(hooksPath, metaFilename))
+	data, err := storage.ReadHookMetaFile(hooksPath, metaFilename)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +103,7 @@ func ReadMeta(hooksPath, metaFilename string) (*Meta, error) {
 }
 
 func RemoveMeta(hooksPath, metaFilename string) error {
-	return os.Remove(MetaPath(hooksPath, metaFilename))
+	return storage.RemoveHookMetaFile(hooksPath, metaFilename)
 }
 
 func PathsEqual(a, b string) bool {
@@ -116,17 +124,11 @@ func PathsEqual(a, b string) bool {
 }
 
 func CleanEmptyHooksDir(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	if len(entries) == 0 {
-		_ = os.Remove(dir)
-	}
+	_ = storage.RemoveDirIfEmpty(dir)
 }
 
 func HookHasManagedSection(path, markerBegin string) bool {
-	content, err := os.ReadFile(path)
+	content, err := storage.ReadHookFile(path)
 	if err != nil {
 		return false
 	}

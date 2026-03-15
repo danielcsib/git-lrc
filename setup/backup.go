@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // BackupExistingConfig backs up ~/.lrc.toml if it exists and is non-empty.
@@ -24,7 +26,7 @@ func BackupExistingConfig(logf func(format string, args ...interface{})) (string
 	}
 
 	configPath := filepath.Join(homeDir, ".lrc.toml")
-	data, err := os.ReadFile(configPath)
+	data, err := storage.ReadConfigFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log("no existing config found")
@@ -40,7 +42,7 @@ func BackupExistingConfig(logf func(format string, args ...interface{})) (string
 	}
 
 	backupPath := configPath + ".bak." + time.Now().Format("20060102-150405")
-	if err := WriteFileAtomically(backupPath, data, 0600); err != nil {
+	if err := storage.WriteFileAtomically(backupPath, data, 0600); err != nil {
 		return "", fmt.Errorf("failed to backup existing config: %w", err)
 	}
 

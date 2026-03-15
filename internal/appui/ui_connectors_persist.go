@@ -1,15 +1,18 @@
 package appui
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"strings"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 func persistConnectorsToConfig(configPath string, connectors []aiConnectorRemote) error {
-	originalBytes, err := os.ReadFile(configPath)
+	originalBytes, err := storage.ReadConfigFile(configPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("failed to read config for connector snapshot: %w", err)
 		}
 		originalBytes = []byte{}
@@ -27,12 +30,7 @@ func persistConnectorsToConfig(configPath string, connectors []aiConnectorRemote
 		updatedContent = trimmed + "\n\n" + managedSection + "\n"
 	}
 
-	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(updatedContent), 0600); err != nil {
-		return fmt.Errorf("failed to write temporary config file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, configPath); err != nil {
+	if err := storage.WriteFileAtomically(configPath, []byte(updatedContent), 0600); err != nil {
 		return fmt.Errorf("failed to replace config file: %w", err)
 	}
 
@@ -40,7 +38,7 @@ func persistConnectorsToConfig(configPath string, connectors []aiConnectorRemote
 }
 
 func persistAuthTokensToConfig(configPath string, jwt string, refreshToken string) error {
-	originalBytes, err := os.ReadFile(configPath)
+	originalBytes, err := storage.ReadConfigFile(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config for token update: %w", err)
 	}
@@ -51,12 +49,7 @@ func persistAuthTokensToConfig(configPath string, jwt string, refreshToken strin
 		updated = upsertQuotedConfigValue(updated, "refresh_token", refreshToken)
 	}
 
-	tmpPath := configPath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(updated), 0600); err != nil {
-		return fmt.Errorf("failed to write temporary config file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, configPath); err != nil {
+	if err := storage.WriteFileAtomically(configPath, []byte(updated), 0600); err != nil {
 		return fmt.Errorf("failed to replace config file: %w", err)
 	}
 

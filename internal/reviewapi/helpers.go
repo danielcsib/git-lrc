@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,22 +15,8 @@ import (
 	"time"
 
 	"github.com/HexmosTech/git-lrc/internal/reviewmodel"
+	"github.com/HexmosTech/git-lrc/network"
 )
-
-func newReviewHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) == 0 {
-				return nil
-			}
-			if req.URL.Host != via[0].URL.Host {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-	}
-}
 
 func RunGitCommand(args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
@@ -119,51 +104,30 @@ func formatJSONParseError(body []byte, contentType string, parseErr error) error
 }
 
 func SubmitReview(apiURL, apiKey, base64Diff, repoName string, verbose bool) (reviewmodel.DiffReviewCreateResponse, error) {
-	endpoint := strings.TrimSuffix(apiURL, "/") + "/api/v1/diff-review"
-
 	payload := reviewmodel.DiffReviewRequest{
 		DiffZipBase64: base64Diff,
 		RepoName:      repoName,
 	}
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return reviewmodel.DiffReviewCreateResponse{}, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return reviewmodel.DiffReviewCreateResponse{}, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
-
 	if verbose {
-		log.Printf("POST %s", endpoint)
+		log.Printf("POST %s", network.ReviewSubmitURL(apiURL))
 	}
 
-	client := newReviewHTTPClient(30 * time.Second)
-	resp, err := client.Do(req)
+	client := network.NewReviewAPIClient(30 * time.Second)
+	resp, err := network.ReviewSubmit(client, apiURL, payload, apiKey)
 	if err != nil {
 		return reviewmodel.DiffReviewCreateResponse{}, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return reviewmodel.DiffReviewCreateResponse{}, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 
 	if resp.StatusCode != http.StatusOK {
-		return reviewmodel.DiffReviewCreateResponse{}, &reviewmodel.APIError{StatusCode: resp.StatusCode, Body: string(body)}
+		return reviewmodel.DiffReviewCreateResponse{}, &reviewmodel.APIError{StatusCode: resp.StatusCode, Body: string(resp.Body)}
 	}
 
 	var result reviewmodel.DiffReviewCreateResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return reviewmodel.DiffReviewCreateResponse{}, formatJSONParseError(body, contentType, err)
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
+		return reviewmodel.DiffReviewCreateResponse{}, formatJSONParseError(resp.Body, contentType, err)
 	}
 
 	if result.ReviewID == "" {
@@ -176,27 +140,14 @@ func SubmitReview(apiURL, apiKey, base64Diff, repoName string, verbose bool) (re
 // trackCLIUsage sends a telemetry ping to the backend to track CLI usage
 // This is a best-effort call and failures are silently ignored
 func TrackCLIUsage(apiURL, apiKey string, verbose bool) {
-	endpoint := strings.TrimSuffix(apiURL, "/") + "/api/v1/diff-review/cli-used"
-
-	req, err := http.NewRequest("POST", endpoint, nil)
-	if err != nil {
-		if verbose {
-			log.Printf("Failed to create telemetry request: %v", err)
-		}
-		return
-	}
-
-	req.Header.Set("X-API-Key", apiKey)
-
-	client := newReviewHTTPClient(5 * time.Second)
-	resp, err := client.Do(req)
+	client := network.NewReviewAPIClient(5 * time.Second)
+	resp, err := network.ReviewTrackCLIUsage(client, apiURL, apiKey)
 	if err != nil {
 		if verbose {
 			log.Printf("Failed to send telemetry: %v", err)
 		}
 		return
 	}
-	defer resp.Body.Close()
 
 	if verbose && resp.StatusCode == http.StatusOK {
 		log.Println("CLI usage tracked successfully")
@@ -207,7 +158,6 @@ var ErrPollCancelled = errors.New("poll cancelled")
 var ErrInputCancelled = errors.New("terminal input cancelled")
 
 func PollReview(apiURL, apiKey, reviewID string, pollInterval, timeout time.Duration, verbose bool, cancel <-chan struct{}) (*reviewmodel.DiffReviewResponse, error) {
-	endpoint := strings.TrimSuffix(apiURL, "/") + "/api/v1/diff-review/" + reviewID
 	deadline := time.Now().Add(timeout)
 	start := time.Now()
 	fmt.Printf("Waiting for review completion (poll every %s, timeout %s)...\r\n", pollInterval, timeout)
@@ -217,7 +167,7 @@ func PollReview(apiURL, apiKey, reviewID string, pollInterval, timeout time.Dura
 		log.Printf("Polling for review completion (timeout: %v)...", timeout)
 	}
 
-	client := newReviewHTTPClient(30 * time.Second)
+	client := network.NewReviewAPIClient(30 * time.Second)
 
 	for time.Now().Before(deadline) {
 		select {
@@ -228,33 +178,20 @@ func PollReview(apiURL, apiKey, reviewID string, pollInterval, timeout time.Dura
 		default:
 		}
 
-		req, err := http.NewRequest("GET", endpoint, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("X-API-Key", apiKey)
-
-		resp, err := client.Do(req)
+		resp, err := network.ReviewPoll(client, apiURL, reviewID, apiKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to send request: %w", err)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
 		contentType := resp.Header.Get("Content-Type")
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, &reviewmodel.APIError{StatusCode: resp.StatusCode, Body: string(body)}
+			return nil, &reviewmodel.APIError{StatusCode: resp.StatusCode, Body: string(resp.Body)}
 		}
 
 		var result reviewmodel.DiffReviewResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, formatJSONParseError(body, contentType, err)
+		if err := json.Unmarshal(resp.Body, &result); err != nil {
+			return nil, formatJSONParseError(resp.Body, contentType, err)
 		}
 
 		statusLine := fmt.Sprintf("Status: %s | elapsed: %s", result.Status, time.Since(start).Truncate(time.Second))

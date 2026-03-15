@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/HexmosTech/git-lrc/internal/reviewapi"
 	"github.com/HexmosTech/git-lrc/internal/reviewdb"
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/urfave/cli/v2"
 )
 
@@ -86,7 +86,7 @@ func existingAttestationAction() (string, error) {
 	}
 
 	attestPath := filepath.Join(gitDir, "lrc", "attestations", fmt.Sprintf("%s.json", treeHash))
-	data, err := os.ReadFile(attestPath)
+	data, err := storage.ReadAttestationFile(attestPath)
 	if err != nil {
 		return "", nil
 	}
@@ -115,7 +115,7 @@ func readCurrentAttestation() (*attestationPayload, error) {
 	}
 
 	attestPath := filepath.Join(gitDir, "lrc", "attestations", fmt.Sprintf("%s.json", treeHash))
-	data, err := os.ReadFile(attestPath)
+	data, err := storage.ReadAttestationFile(attestPath)
 	if err != nil {
 		return nil, nil
 	}
@@ -190,7 +190,7 @@ func writeAttestationFullForCurrentTree(payload attestationPayload) (string, err
 	}
 
 	attestDir := filepath.Join(gitDir, "lrc", "attestations")
-	if err := os.MkdirAll(attestDir, 0755); err != nil {
+	if err := storage.EnsureAttestationOutputDir(attestDir); err != nil {
 		return "", fmt.Errorf("failed to create attestation directory: %w", err)
 	}
 
@@ -199,23 +199,9 @@ func writeAttestationFullForCurrentTree(payload attestationPayload) (string, err
 		return "", fmt.Errorf("failed to marshal attestation: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(attestDir, fmt.Sprintf("%s.*.json", treeHash))
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp attestation file: %w", err)
-	}
-
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		return "", fmt.Errorf("failed to write attestation: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		return "", fmt.Errorf("failed to finalize attestation: %w", err)
-	}
-
 	target := filepath.Join(attestDir, fmt.Sprintf("%s.json", treeHash))
-	if err := os.Rename(tmpFile.Name(), target); err != nil {
-		return "", fmt.Errorf("failed to move attestation into place: %w", err)
+	if err := storage.WriteFileAtomically(target, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write attestation: %w", err)
 	}
 
 	return target, nil
@@ -236,7 +222,7 @@ func deleteAttestationForCurrentTree() error {
 	}
 
 	attestPath := filepath.Join(gitDir, "lrc", "attestations", fmt.Sprintf("%s.json", treeHash))
-	if err := os.Remove(attestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := storage.RemoveAttestationFile(attestPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("failed to delete attestation %s: %w", attestPath, err)
 	}
 

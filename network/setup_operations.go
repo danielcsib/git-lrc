@@ -1,0 +1,23 @@
+package network
+
+import "net/http"
+
+// SetupEnsureCloudUser submits the ensure-cloud-user setup request.
+func SetupEnsureCloudUser(client *Client, cloudBase string, payload any, jwt string) (*Response, error) {
+	return client.DoJSON(http.MethodPost, SetupEnsureCloudUserURL(cloudBase), payload, jwt, "", nil)
+}
+
+// SetupCreateAPIKey submits the create API key setup request.
+func SetupCreateAPIKey(client *Client, cloudBase, orgID string, payload any, accessToken string) (*Response, error) {
+	return client.DoJSON(http.MethodPost, SetupCreateAPIKeyURL(cloudBase, orgID), payload, accessToken, "", nil)
+}
+
+// SetupValidateConnectorKey submits the setup key-validation request.
+func SetupValidateConnectorKey(client *Client, cloudBase, orgID string, payload any, accessToken string) (*Response, error) {
+	return client.DoJSON(http.MethodPost, SetupValidateConnectorKeyURL(cloudBase), payload, accessToken, orgID, nil)
+}
+
+// SetupCreateConnector submits the setup create-connector request.
+func SetupCreateConnector(client *Client, cloudBase, orgID string, payload any, accessToken string) (*Response, error) {
+	return client.DoJSON(http.MethodPost, SetupCreateConnectorURL(cloudBase), payload, accessToken, orgID, nil)
+}

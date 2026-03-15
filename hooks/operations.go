@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // InstallHook installs or updates a hook with a managed section.
@@ -14,21 +16,21 @@ func InstallHook(hookPath, managedSection, hookName, backupDir, markerBegin, mar
 	timestamp := time.Now().Format("20060102_150405")
 	backupPath := filepath.Join(backupDir, fmt.Sprintf("%s.%s", hookName, timestamp))
 
-	existingContent, err := os.ReadFile(hookPath)
+	existingContent, err := storage.ReadHookFile(hookPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read existing hook: %w", err)
 	}
 
 	if len(existingContent) == 0 {
 		content := "#!/bin/sh\n" + managedSection
-		if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
+		if err := storage.WriteFile(hookPath, []byte(content), 0755); err != nil {
 			return fmt.Errorf("failed to write hook: %w", err)
 		}
 		fmt.Printf("✅ Created %s\n", hookName)
 		return nil
 	}
 
-	if err := os.WriteFile(backupPath, existingContent, 0644); err != nil {
+	if err := storage.WriteFile(backupPath, existingContent, 0644); err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
 	fmt.Printf("📁 Backup created: %s\n", backupPath)
@@ -40,7 +42,7 @@ func InstallHook(hookPath, managedSection, hookName, backupDir, markerBegin, mar
 			return nil
 		}
 		newContent := ReplaceManagedSection(contentStr, managedSection, markerBegin, markerEnd)
-		if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
+		if err := storage.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
 			return fmt.Errorf("failed to update hook: %w", err)
 		}
 		fmt.Printf("✅ Updated %s (replaced lrc section)\n", hookName)
@@ -59,7 +61,7 @@ func InstallHook(hookPath, managedSection, hookName, backupDir, markerBegin, mar
 		}
 	}
 
-	if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
+	if err := storage.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
 		return fmt.Errorf("failed to write hook: %w", err)
 	}
 	fmt.Printf("✅ Updated %s (added lrc section)\n", hookName)
@@ -69,7 +71,7 @@ func InstallHook(hookPath, managedSection, hookName, backupDir, markerBegin, mar
 
 // UninstallHook removes managed section from a hook file.
 func UninstallHook(hookPath, hookName, markerBegin, markerEnd string) error {
-	content, err := os.ReadFile(hookPath)
+	content, err := storage.ReadHookFile(hookPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -86,14 +88,14 @@ func UninstallHook(hookPath, hookName, markerBegin, markerEnd string) error {
 
 	trimmed := strings.TrimSpace(newContent)
 	if trimmed == "" || trimmed == "#!/bin/sh" {
-		if err := os.Remove(hookPath); err != nil {
+		if err := storage.RemoveHookScriptFile(hookPath); err != nil {
 			return fmt.Errorf("failed to remove hook file: %w", err)
 		}
 		fmt.Printf("🗑️  Removed %s (was empty after removing lrc section)\n", hookName)
 		return nil
 	}
 
-	if err := os.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
+	if err := storage.WriteFile(hookPath, []byte(newContent), 0755); err != nil {
 		return fmt.Errorf("failed to write hook: %w", err)
 	}
 	fmt.Printf("✅ Removed lrc section from %s\n", hookName)
@@ -173,7 +175,7 @@ func CleanOldBackups(backupDir string, keepLast int) error {
 
 		for i := 0; i < len(backups)-keepLast; i++ {
 			oldPath := filepath.Join(backupDir, backups[i].Name())
-			if err := os.Remove(oldPath); err != nil {
+			if err := storage.RemoveHookBackupFile(oldPath); err != nil {
 				log.Printf("Warning: failed to remove old backup %s: %v", oldPath, err)
 			} else {
 				log.Printf("Removed old backup: %s", backups[i].Name())

@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/HexmosTech/git-lrc/network"
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/gofrs/flock"
 	"github.com/urfave/cli/v2"
 )
@@ -27,11 +29,6 @@ import (
 // version is injected by main at startup so update checks compare against the
 // exact runtime build version (including ldflags overrides).
 var version = "unknown"
-
-const (
-	releaseManifestURL = "https://f005.backblazeb2.com/file/hexmos/lrc/latest.json"
-	publicDownloadBase = "https://f005.backblazeb2.com/file/hexmos"
-)
 
 // =============================================================================
 // SELF-UPDATE FUNCTIONALITY
@@ -42,57 +39,7 @@ var (
 	semverRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
 )
 
-type releasePlatformArtifact struct {
-	Binary     string `json:"binary"`
-	SHA256Sums string `json:"sha256sums"`
-	SHA256     string `json:"sha256"`
-}
-
-type releaseManifestVersion struct {
-	Platforms map[string]releasePlatformArtifact `json:"platforms"`
-}
-
-type releaseManifest struct {
-	SchemaVersion int                               `json:"schema_version"`
-	GeneratedAt   string                            `json:"generated_at"`
-	LatestVersion string                            `json:"latest_version"`
-	Bucket        string                            `json:"bucket"`
-	Prefix        string                            `json:"prefix"`
-	DownloadBase  string                            `json:"download_base"`
-	Releases      map[string]releaseManifestVersion `json:"releases"`
-}
-
-type pendingUpdateState struct {
-	Version          string `json:"version"`
-	StagedBinaryPath string `json:"staged_binary_path"`
-	DownloadedAt     string `json:"downloaded_at"`
-}
-
-type updateLockMetadata struct {
-	PID       int    `json:"pid"`
-	UID       string `json:"uid,omitempty"`
-	Username  string `json:"username,omitempty"`
-	Command   string `json:"command"`
-	Version   string `json:"version"`
-	StartedAt string `json:"started_at"`
-}
-
 var autoUpdateStartOnce sync.Once
-
-func newSelfUpdateHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) == 0 {
-				return nil
-			}
-			if req.URL.Host != via[0].URL.Host {
-				return http.ErrUseLastResponse
-			}
-			return nil
-		},
-	}
-}
 
 // semverParse extracts major, minor, patch from a version string like "v0.1.14"
 func semverParse(v string) (int, int, int, bool) {
@@ -138,25 +85,18 @@ func semverCompare(a, b string) (int, error) {
 	return 0, nil
 }
 
-func fetchReleaseManifest(client *http.Client) (*releaseManifest, error) {
-	manifestReq, err := http.NewRequest("GET", releaseManifestURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create manifest request: %w", err)
-	}
-
-	resp, err := client.Do(manifestReq)
+func fetchReleaseManifest(client *network.Client) (*network.ReleaseManifest, error) {
+	resp, err := network.SelfUpdateFetchManifest(client)
 	if err != nil {
 		return nil, fmt.Errorf("manifest request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("manifest request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("manifest request failed with status %d: %s", resp.StatusCode, string(resp.Body))
 	}
 
-	var manifest releaseManifest
-	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+	var manifest network.ReleaseManifest
+	if err := json.Unmarshal(resp.Body, &manifest); err != nil {
 		return nil, fmt.Errorf("failed to decode release manifest: %w", err)
 	}
 	if strings.TrimSpace(manifest.LatestVersion) == "" {
@@ -170,7 +110,7 @@ func fetchReleaseManifest(client *http.Client) (*releaseManifest, error) {
 }
 
 func fetchLatestVersionFromManifest() (string, error) {
-	client := newSelfUpdateHTTPClient(30 * time.Second)
+	client := network.NewSelfUpdateClient(30 * time.Second)
 	manifest, err := fetchReleaseManifest(client)
 	if err != nil {
 		return "", err
@@ -207,19 +147,19 @@ func ensureSelfUpdateStateDir() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
+	if err := storage.MkdirAll(stateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create self-update state directory: %w", err)
 	}
 	return nil
 }
 
-func loadPendingUpdateState() (*pendingUpdateState, error) {
+func loadPendingUpdateState() (*storage.PendingUpdateState, error) {
 	statePath, err := pendingUpdateStatePath()
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(statePath)
+	data, err := storage.ReadPendingUpdateStateBytes(statePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -227,7 +167,7 @@ func loadPendingUpdateState() (*pendingUpdateState, error) {
 		return nil, fmt.Errorf("failed to read pending update state: %w", err)
 	}
 
-	var state pendingUpdateState
+	var state storage.PendingUpdateState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("failed to parse pending update state: %w", err)
 	}
@@ -239,7 +179,7 @@ func loadPendingUpdateState() (*pendingUpdateState, error) {
 	return &state, nil
 }
 
-func savePendingUpdateState(state *pendingUpdateState) error {
+func savePendingUpdateState(state *storage.PendingUpdateState) error {
 	if state == nil {
 		return fmt.Errorf("pending update state is nil")
 	}
@@ -257,30 +197,7 @@ func savePendingUpdateState(state *pendingUpdateState) error {
 		return fmt.Errorf("failed to encode pending update state: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(filepath.Dir(statePath), "pending-update-*.tmp")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary pending update state file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to write pending update state: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to finalize pending update state: %w", err)
-	}
-
-	if err := os.Chmod(tmpPath, 0644); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to set permissions on pending update state: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, statePath); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := storage.WriteFileAtomically(statePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to atomically write pending update state: %w", err)
 	}
 
@@ -292,7 +209,7 @@ func clearPendingUpdateState() error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
+	if err := storage.Remove(statePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("failed to clear pending update state: %w", err)
 	}
 	return nil
@@ -306,13 +223,13 @@ func currentUserIdentity() (string, string) {
 	return strings.TrimSpace(usr.Uid), strings.TrimSpace(usr.Username)
 }
 
-func readUpdateLockMetadata() (*updateLockMetadata, error) {
+func readUpdateLockMetadata() (*storage.UpdateLockMetadata, error) {
 	lockPath, err := updateLockPath()
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(lockPath)
+	data, err := storage.ReadUpdateLockMetadataBytes(lockPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -324,7 +241,7 @@ func readUpdateLockMetadata() (*updateLockMetadata, error) {
 		return nil, nil
 	}
 
-	var metadata updateLockMetadata
+	var metadata storage.UpdateLockMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("failed to parse update lock metadata: %w", err)
 	}
@@ -332,7 +249,7 @@ func readUpdateLockMetadata() (*updateLockMetadata, error) {
 	return &metadata, nil
 }
 
-func writeUpdateLockMetadata(lockPath string, metadata *updateLockMetadata) {
+func writeUpdateLockMetadata(lockPath string, metadata *storage.UpdateLockMetadata) {
 	if metadata == nil {
 		return
 	}
@@ -340,7 +257,7 @@ func writeUpdateLockMetadata(lockPath string, metadata *updateLockMetadata) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(lockPath, data, 0644)
+	_ = storage.WriteFile(lockPath, data, 0644)
 }
 
 func isProcessRunning(pid int) bool {
@@ -482,7 +399,7 @@ func acquireUpdateLock(force bool, command string, verbose bool) (func(), bool, 
 	}
 
 	uid, username := currentUserIdentity()
-	writeUpdateLockMetadata(lockPath, &updateLockMetadata{
+	writeUpdateLockMetadata(lockPath, &storage.UpdateLockMetadata{
 		PID:       os.Getpid(),
 		UID:       uid,
 		Username:  username,
@@ -530,7 +447,7 @@ func downloadVersionBinaryFromManifest(versionTag string) (string, error) {
 		binaryName = "lrc.exe"
 	}
 
-	client := newSelfUpdateHTTPClient(60 * time.Second)
+	client := network.NewSelfUpdateClient(60 * time.Second)
 	manifest, err := fetchReleaseManifest(client)
 	if err != nil {
 		return "", err
@@ -551,52 +468,40 @@ func downloadVersionBinaryFromManifest(versionTag string) (string, error) {
 		return "", fmt.Errorf("release manifest binary path %q does not match expected binary %q", artifact.Binary, binaryName)
 	}
 
-	fullURL := artifact.Binary
-	if !strings.HasPrefix(fullURL, "http://") && !strings.HasPrefix(fullURL, "https://") {
-		fullURL = fmt.Sprintf("%s/%s", strings.TrimRight(publicDownloadBase, "/"), strings.TrimLeft(artifact.Binary, "/"))
-	}
+	fullURL := network.SelfUpdateBinaryURL(artifact.Binary)
 
-	req, err := http.NewRequest("GET", fullURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create download request: %w", err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to download update binary: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("failed to download binary (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	tmpFile, err := os.CreateTemp("", "lrc-update-*")
+	tmpFile, err := storage.CreateTemp("", "lrc-update-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary file for update: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	statusCode, err := network.SelfUpdateDownloadBinaryTo(client, fullURL, tmpFile)
+	if err != nil {
 		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("failed to write downloaded update binary: %w", err)
+		_ = storage.Remove(tmpPath)
+		return "", fmt.Errorf("failed to download update binary: %w", err)
+	}
+
+	if statusCode != http.StatusOK {
+		_ = tmpFile.Close()
+		_ = storage.Remove(tmpPath)
+		return "", fmt.Errorf("failed to download binary (status %d)", statusCode)
 	}
 	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
+		_ = storage.Remove(tmpPath)
 		return "", fmt.Errorf("failed to finalize downloaded update binary: %w", err)
 	}
 
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := storage.Chmod(tmpPath, 0755); err != nil {
+		_ = storage.Remove(tmpPath)
 		return "", fmt.Errorf("failed to mark downloaded binary executable: %w", err)
 	}
 
 	return tmpPath, nil
 }
 
-func stageUpdateVersion(versionTag string, force bool, verbose bool) (*pendingUpdateState, error) {
+func stageUpdateVersion(versionTag string, force bool, verbose bool) (*storage.PendingUpdateState, error) {
 	release, acquired, err := acquireUpdateLock(force, "self-update-stage", verbose)
 	if err != nil {
 		return nil, err
@@ -628,14 +533,14 @@ func stageUpdateVersion(versionTag string, force bool, verbose bool) (*pendingUp
 		return nil, err
 	}
 
-	state := &pendingUpdateState{
+	state := &storage.PendingUpdateState{
 		Version:          versionTag,
 		StagedBinaryPath: stagedBinaryPath,
 		DownloadedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if err := savePendingUpdateState(state); err != nil {
-		_ = os.Remove(stagedBinaryPath)
+		_ = storage.Remove(stagedBinaryPath)
 		return nil, err
 	}
 
@@ -668,24 +573,24 @@ func currentBinaryTargets() (string, string, error) {
 
 func pathDirWritable(path string) bool {
 	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".lrc-write-check-")
+	f, err := storage.CreateTemp(dir, ".lrc-write-check-")
 	if err != nil {
 		return false
 	}
 	name := f.Name()
 	_ = f.Close()
-	_ = os.Remove(name)
+	_ = storage.Remove(name)
 	return true
 }
 
 func copyFileContents(srcPath, dstPath string, mode fs.FileMode) error {
-	src, err := os.Open(srcPath)
+	src, err := storage.OpenFileForRead(srcPath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file %s: %w", srcPath, err)
 	}
 	defer src.Close()
 
-	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	dst, err := storage.OpenFile(dstPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return fmt.Errorf("failed to open destination file %s: %w", dstPath, err)
 	}
@@ -728,7 +633,7 @@ func runHooksInstallWithBinary(binaryPath string, verbose bool) error {
 	return nil
 }
 
-func applyPendingUpdateUnix(state *pendingUpdateState, verbose bool) error {
+func applyPendingUpdateUnix(state *storage.PendingUpdateState, verbose bool) error {
 	lrcBinaryPath, gitLRCBinaryPath, err := currentBinaryTargets()
 	if err != nil {
 		return err
@@ -743,20 +648,20 @@ func applyPendingUpdateUnix(state *pendingUpdateState, verbose bool) error {
 		return err
 	}
 
-	if err := os.Chmod(replaceTmpPath, 0755); err != nil {
-		_ = os.Remove(replaceTmpPath)
+	if err := storage.Chmod(replaceTmpPath, 0755); err != nil {
+		_ = storage.Remove(replaceTmpPath)
 		return fmt.Errorf("failed to set executable permissions on replacement binary: %w", err)
 	}
 
-	if err := os.Rename(replaceTmpPath, lrcBinaryPath); err != nil {
-		_ = os.Remove(replaceTmpPath)
+	if err := storage.Rename(replaceTmpPath, lrcBinaryPath); err != nil {
+		_ = storage.Remove(replaceTmpPath)
 		return fmt.Errorf("failed to replace lrc binary: %w", err)
 	}
 
 	if err := copyFileContents(lrcBinaryPath, gitLRCBinaryPath, 0755); err != nil {
 		return fmt.Errorf("failed to sync git-lrc binary: %w", err)
 	}
-	if err := os.Chmod(gitLRCBinaryPath, 0755); err != nil {
+	if err := storage.Chmod(gitLRCBinaryPath, 0755); err != nil {
 		return fmt.Errorf("failed to set executable permissions on git-lrc binary: %w", err)
 	}
 
@@ -764,7 +669,7 @@ func applyPendingUpdateUnix(state *pendingUpdateState, verbose bool) error {
 		return err
 	}
 
-	_ = os.Remove(state.StagedBinaryPath)
+	_ = storage.Remove(state.StagedBinaryPath)
 	if err := clearPendingUpdateState(); err != nil {
 		return err
 	}
@@ -777,7 +682,7 @@ func psSingleQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
-func applyPendingUpdateWindows(state *pendingUpdateState, verbose bool) error {
+func applyPendingUpdateWindows(state *storage.PendingUpdateState, verbose bool) error {
 	lrcBinaryPath, gitLRCBinaryPath, err := currentBinaryTargets()
 	if err != nil {
 		return err
@@ -807,7 +712,7 @@ func applyPendingUpdateWindows(state *pendingUpdateState, verbose bool) error {
 	return nil
 }
 
-func applyPendingUpdateState(state *pendingUpdateState, verbose bool) error {
+func applyPendingUpdateState(state *storage.PendingUpdateState, verbose bool) error {
 	if state == nil {
 		return nil
 	}

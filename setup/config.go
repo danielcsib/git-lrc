@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // WriteConfig writes setup results to ~/.lrc.toml.
@@ -46,41 +48,14 @@ refresh_token = %q
 		result.RefreshToken,
 	)
 
-	if err := WriteFileAtomically(configPath, []byte(content), 0600); err != nil {
+	if err := storage.WriteFileAtomically(configPath, []byte(content), 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
 	return nil
 }
 
-// WriteFileAtomically atomically replaces a target file with provided content.
+// WriteFileAtomically remains for compatibility and delegates writes to storage.
 func WriteFileAtomically(path string, data []byte, mode os.FileMode) error {
-	tmpFile, err := os.CreateTemp(filepath.Dir(path), ".lrc-config-*.tmp")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to write temporary file: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to finalize temporary file: %w", err)
-	}
-
-	if err := os.Chmod(tmpPath, mode); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to set permissions on temporary file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to atomically replace %s: %w", path, err)
-	}
-
-	return nil
+	return storage.WriteFileAtomically(path, data, mode)
 }

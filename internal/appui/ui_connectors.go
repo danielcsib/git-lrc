@@ -12,6 +12,7 @@ import (
 
 	"github.com/HexmosTech/git-lrc/internal/reviewopts"
 	"github.com/HexmosTech/git-lrc/internal/staticserve"
+	"github.com/HexmosTech/git-lrc/network"
 	uicfg "github.com/HexmosTech/git-lrc/ui"
 	"github.com/urfave/cli/v2"
 )
@@ -28,7 +29,7 @@ type aiConnectorRemote = uicfg.ConnectorRemote
 
 type connectorManagerServer struct {
 	cfg    *uiRuntimeConfig
-	client *http.Client
+	client *network.Client
 	mu     sync.Mutex
 }
 
@@ -48,7 +49,7 @@ func RunUI(c *cli.Context) error {
 
 	srv := &connectorManagerServer{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: network.NewUIConnectorClient(30 * time.Second),
 	}
 
 	mux := http.NewServeMux()

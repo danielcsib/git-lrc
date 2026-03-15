@@ -2,13 +2,14 @@ package hooks
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // WriteManagedHookScripts writes all lrc-managed hook scripts into dir.
 func WriteManagedHookScripts(dir string, cfg TemplateConfig) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := storage.EnsureManagedHooksDir(dir); err != nil {
 		return err
 	}
 
@@ -22,7 +23,7 @@ func WriteManagedHookScripts(dir string, cfg TemplateConfig) error {
 	for name, content := range scripts {
 		path := filepath.Join(dir, name)
 		script := "#!/bin/sh\n" + content
-		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		if err := storage.WriteFile(path, []byte(script), 0755); err != nil {
 			return fmt.Errorf("failed to write managed hook %s: %w", name, err)
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 // ReviewDBPath resolves the review DB location under .git/lrc/reviews.db.
@@ -26,7 +26,7 @@ func ReviewDBPath(resolveGitDir func() (string, error)) (string, error) {
 		}
 	}
 	lrcDir := filepath.Join(gitDir, "lrc")
-	if err := os.MkdirAll(lrcDir, 0755); err != nil {
+	if err := storage.EnsureReviewDBDir(lrcDir); err != nil {
 		return "", fmt.Errorf("failed to create lrc directory: %w", err)
 	}
 	return filepath.Join(lrcDir, "reviews.db"), nil
@@ -34,12 +34,12 @@ func ReviewDBPath(resolveGitDir func() (string, error)) (string, error) {
 
 // OpenSQLiteReviewDB opens and initializes the SQLite review DB.
 func OpenSQLiteReviewDB(dbPath, schema string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := storage.OpenAttestationReviewDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open review database: %w", err)
 	}
 
-	if _, err := db.Exec(schema); err != nil {
+	if err := storage.InitializeAttestationReviewSchema(db, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize review database schema: %w", err)
 	}
@@ -64,10 +64,14 @@ func InsertReviewSession(db *sql.DB, treeHash, branch, action string, files []Fi
 		return fmt.Errorf("failed to marshal diff files: %w", err)
 	}
 
-	_, err = db.Exec(
-		`INSERT INTO review_sessions (tree_hash, branch, action, timestamp, diff_files, review_id)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		treeHash, branch, action, time.Now().UTC().Format(time.RFC3339), string(filesJSON), reviewID,
+	err = storage.InsertAttestationReviewSessionRow(
+		db,
+		treeHash,
+		branch,
+		action,
+		time.Now().UTC().Format(time.RFC3339),
+		string(filesJSON),
+		reviewID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert review session: %w", err)
@@ -77,20 +81,12 @@ func InsertReviewSession(db *sql.DB, treeHash, branch, action string, files []Fi
 
 // CountIterations returns total review session count for a branch.
 func CountIterations(db *sql.DB, branch string) (int, error) {
-	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM review_sessions WHERE branch = ?`, branch).Scan(&count)
-	return count, err
+	return storage.QueryAttestationReviewSessionCountByBranch(db, branch)
 }
 
 // GetPriorReviewedSessions returns branch sessions with action=reviewed in timestamp order.
 func GetPriorReviewedSessions(db *sql.DB, branch string) ([]ReviewSession, error) {
-	rows, err := db.Query(
-		`SELECT id, tree_hash, branch, action, timestamp, diff_files, review_id
-		 FROM review_sessions
-		 WHERE branch = ? AND action = 'reviewed'
-		 ORDER BY timestamp ASC`,
-		branch,
-	)
+	rows, err := storage.QueryAttestationReviewedSessionsByBranch(db, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -117,18 +113,10 @@ func GetPriorReviewedSessions(db *sql.DB, branch string) ([]ReviewSession, error
 
 // CleanupReviewSessions deletes all sessions for a branch.
 func CleanupReviewSessions(db *sql.DB, branch string) (int64, error) {
-	result, err := db.Exec(`DELETE FROM review_sessions WHERE branch = ?`, branch)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return storage.DeleteAttestationReviewSessionsByBranch(db, branch)
 }
 
 // CleanupAllSessions deletes all sessions from the review database.
 func CleanupAllSessions(db *sql.DB) (int64, error) {
-	result, err := db.Exec(`DELETE FROM review_sessions`)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return storage.DeleteAllAttestationReviewSessions(db)
 }

@@ -48,13 +48,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func buildLiveReviewURL(baseURL, apiPath string) string {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	base = strings.TrimSuffix(base, "/api/v1")
-	base = strings.TrimSuffix(base, "/api")
-	return base + apiPath
-}
-
 func writeRawJSON(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

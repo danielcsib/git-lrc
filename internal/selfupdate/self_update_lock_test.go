@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/HexmosTech/git-lrc/storage"
 )
 
 func TestSelfUpdateLockHelperProcess(t *testing.T) {
@@ -103,7 +105,7 @@ func TestSavePendingUpdateStateAtomicWrite(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("USERPROFILE", tmpHome)
 
-	state := &pendingUpdateState{
+	state := &storage.PendingUpdateState{
 		Version:          "v0.1.99",
 		StagedBinaryPath: "/tmp/lrc-test-bin",
 		DownloadedAt:     "2026-03-08T00:00:00Z",
@@ -122,7 +124,7 @@ func TestSavePendingUpdateStateAtomicWrite(t *testing.T) {
 		t.Fatalf("failed to read pending update state file: %v", err)
 	}
 
-	var parsed pendingUpdateState
+	var parsed storage.PendingUpdateState
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatalf("saved state is not valid JSON: %v", err)
 	}

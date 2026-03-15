@@ -7,11 +7,12 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/HexmosTech/git-lrc/internal/reviewopts"
 	"github.com/HexmosTech/git-lrc/internal/staticserve"
+	"github.com/HexmosTech/git-lrc/network"
+	"github.com/HexmosTech/git-lrc/storage"
 	uicfg "github.com/HexmosTech/git-lrc/ui"
 )
 
@@ -87,7 +88,7 @@ func (s *connectorManagerServer) handleSessionStatus(w http.ResponseWriter, r *h
 		return
 	}
 
-	probeURL := buildLiveReviewURL(apiURL, "/api/v1/aiconnectors")
+	probeURL := network.ReviewNormalizedAPIURL(apiURL, "/api/v1/aiconnectors")
 	probeStatus, _, err := s.forwardJSONRequest(http.MethodGet, probeURL, nil, jwt, orgID)
 	if err != nil {
 		status.Message = err.Error()
@@ -149,7 +150,7 @@ func (s *connectorManagerServer) handleReauthenticate(w http.ResponseWriter, r *
 		return
 	}
 
-	_ = os.Remove(slog.logFile)
+	_ = storage.RemoveReauthLogFile(slog.logFile)
 
 	s.mu.Lock()
 	s.cfg.APIURL = cloudAPIURL

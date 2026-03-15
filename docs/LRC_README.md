@@ -2,6 +2,41 @@
 
 `lrc` is a command-line tool for submitting local code diffs to LiveReview for AI-powered code review.
 
+### What data is sent?
+
+Only the **staged diff bundle** required for review is sent to LiveReview APIs. No full repository context is uploaded.
+
+`git-lrc` now uses explicit boundaries for data handling:
+
+- `storage/*`: local file/DB persistence only (config, hook metadata, attestation DB/files, review outputs, self-update state files)
+- `network/*`: outbound HTTP calls only (review submit/poll, connector APIs, auth refresh, provisioning, self-update manifest/binary fetch)
+
+Transmission behavior:
+
+- Review submission sends a zip/base64 of the selected diff (`/api/v1/diff-review`)
+- Optional telemetry sends CLI usage ping (`/api/v1/diff-review/cli-used`)
+- Connector setup/validation calls go to connector/auth endpoints when you run setup/UI flows
+
+Local persistence behavior:
+
+- Credentials and connector state are written to `~/.lrc.toml`
+- Hook/attestation artifacts are written under `.git/lrc/...`
+- Optional review artifacts are written only when you pass `--save-*` flags
+
+Retention and deletion:
+
+- Local files are user-controlled and can be deleted directly from `~/.lrc.toml`, `~/.lrc/update/*`, and `.git/lrc/*`
+- Server-side retention/training policy is governed by LiveReview backend policy; the CLI does not independently retain uploaded diff payloads after submission
+
+## Data Handling Boundaries
+
+To make confidentiality behavior explicit, the CLI uses two boundary packages:
+
+- `storage/*`: all local persistence (config files, hook/attestation files, sqlite mutations, output artifacts, self-update state)
+- `network/*`: all outbound HTTP traffic (setup/provisioning, review submit/poll, connector proxy/auth refresh, self-update fetches)
+
+This gives one place to audit what is written locally vs what leaves the machine.
+
 ## Installation
 
 Build the binary:

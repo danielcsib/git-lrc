@@ -9,6 +9,7 @@ import (
 	gitops "github.com/HexmosTech/git-lrc/gitops"
 	hooksvc "github.com/HexmosTech/git-lrc/hooks"
 	"github.com/HexmosTech/git-lrc/internal/reviewapi"
+	"github.com/HexmosTech/git-lrc/storage"
 	"github.com/urfave/cli/v2"
 )
 
@@ -42,8 +43,8 @@ func hooksMetaPath(hooksPath string) string {
 	return hooksvc.MetaPath(hooksPath, hooksMetaFilename)
 }
 
-func writeHooksMeta(hooksPath string, meta hooksMeta) {
-	hooksvc.WriteMeta(hooksPath, hooksMetaFilename, meta)
+func writeHooksMeta(hooksPath string, meta hooksMeta) error {
+	return hooksvc.WriteMeta(hooksPath, hooksMetaFilename, meta)
 }
 
 func readHooksMeta(hooksPath string) (*hooksMeta, error) {
@@ -121,13 +122,13 @@ func runHooksInstall(c *cli.Context) error {
 		}
 	}
 
-	if err := os.MkdirAll(absHooksPath, 0755); err != nil {
+	if err := storage.EnsureHooksPathDir(absHooksPath); err != nil {
 		return fmt.Errorf("failed to create hooks path %s: %w", absHooksPath, err)
 	}
 
 	managedDir := filepath.Join(absHooksPath, "lrc")
 	backupDir := filepath.Join(absHooksPath, ".lrc_backups")
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
+	if err := storage.EnsureHooksBackupDir(backupDir); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
@@ -144,7 +145,9 @@ func runHooksInstall(c *cli.Context) error {
 	}
 
 	if !localInstall {
-		writeHooksMeta(absHooksPath, hooksMeta{Path: absHooksPath, PrevPath: prevGlobalPath, SetByLRC: setConfig})
+		if err := writeHooksMeta(absHooksPath, hooksMeta{Path: absHooksPath, PrevPath: prevGlobalPath, SetByLRC: setConfig}); err != nil {
+			return fmt.Errorf("failed to write hooks metadata: %w", err)
+		}
 	}
 	_ = cleanOldBackups(backupDir, 5)
 
@@ -215,8 +218,8 @@ func runHooksUninstall(c *cli.Context) error {
 		}
 	}
 
-	_ = os.RemoveAll(filepath.Join(absHooksPath, "lrc"))
-	_ = os.RemoveAll(filepath.Join(absHooksPath, ".lrc_backups"))
+	_ = storage.RemoveManagedHooksDir(absHooksPath)
+	_ = storage.RemoveHooksBackupDir(absHooksPath)
 	if !localUninstall {
 		_ = removeHooksMeta(absHooksPath)
 	}
@@ -287,12 +290,12 @@ func runHooksDisable(c *cli.Context) error {
 	}
 
 	lrcDir := filepath.Join(gitDir, "lrc")
-	if err := os.MkdirAll(lrcDir, 0755); err != nil {
+	if err := storage.EnsureRepoLRCStateDir(lrcDir); err != nil {
 		return fmt.Errorf("failed to create lrc directory: %w", err)
 	}
 
 	marker := filepath.Join(lrcDir, "disabled")
-	if err := os.WriteFile(marker, []byte("disabled\n"), 0644); err != nil {
+	if err := storage.WriteFile(marker, []byte("disabled\n"), 0644); err != nil {
 		return fmt.Errorf("failed to write disable marker: %w", err)
 	}
 
@@ -307,7 +310,7 @@ func runHooksEnable(c *cli.Context) error {
 	}
 
 	marker := filepath.Join(gitDir, "lrc", "disabled")
-	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+	if err := storage.RemoveRepoHooksDisabledMarker(marker); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove disable marker: %w", err)
 	}
 
@@ -394,7 +397,7 @@ func installEditorWrapper(gitDir string) error {
 
 	currentEditor, _ := readGitConfig(repoRoot, "core.editor")
 	if currentEditor != "" {
-		_ = os.WriteFile(backupPath, []byte(currentEditor), 0600)
+		_ = storage.WriteFile(backupPath, []byte(currentEditor), 0600)
 	}
 
 	script := fmt.Sprintf(`#!/bin/sh
@@ -422,7 +425,7 @@ fi
 exec vi "$@"
 `, filepath.Join(gitDir, commitMessageFile))
 
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+	if err := storage.WriteFile(scriptPath, []byte(script), 0755); err != nil {
 		return fmt.Errorf("failed to write editor wrapper: %w", err)
 	}
 
@@ -439,7 +442,7 @@ func uninstallEditorWrapper(gitDir string) error {
 	scriptPath := filepath.Join(gitDir, editorWrapperScript)
 	backupPath := filepath.Join(gitDir, editorBackupFile)
 
-	if data, err := os.ReadFile(backupPath); err == nil {
+	if data, err := storage.ReadEditorBackupFile(backupPath); err == nil {
 		value := strings.TrimSpace(string(data))
 		if value != "" {
 			_ = setGitConfig(repoRoot, "core.editor", value)
@@ -448,8 +451,8 @@ func uninstallEditorWrapper(gitDir string) error {
 		_ = unsetGitConfig(repoRoot, "core.editor")
 	}
 
-	_ = os.Remove(scriptPath)
-	_ = os.Remove(backupPath)
+	_ = storage.RemoveEditorWrapperScript(scriptPath)
+	_ = storage.RemoveEditorBackupStateFile(backupPath)
 
 	return nil
 }
