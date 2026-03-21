@@ -53,6 +53,17 @@ https://github.com/user-attachments/assets/cc4aa598-a7e3-4a1d-998c-9f2ba4b4c66e
 
 ### Install
 
+#### Via IPM (Recommended):
+```bash
+# Linux/macOS
+curl -L https://hexmos.com/ipm-install | bash && ipm i HexmosTech/git-lrc
+
+# Windows
+iwr https://hexmos.com/ipm-install-ps | iex; ipm i HexmosTech/git-lrc
+```
+
+#### Alternative (direct install):
+
 **Linux / macOS:**
 
 ```bash
