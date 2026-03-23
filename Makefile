@@ -1,4 +1,4 @@
-.PHONY: build build-win build-all build-local build-local-test run run-fake-review bump release clean test testall test-pkg upload-secrets download-secrets security-govulncheck security-govulncheck-json security-osv security-triage security-gitleaks security-b2-audit security-b2-cleanup-plan security-b2-cleanup-apply security-publish-release-manifest security-secret-regression
+.PHONY: build build-win build-all build-local build-local-test run run-fake-review bump release clean test testall test-pkg upload-secrets download-secrets security-govulncheck security-govulncheck-json security-osv security-triage security-gitleaks security-b2-audit security-b2-cleanup-plan security-b2-cleanup-apply security-publish-release-manifest security-secret-regression security-sbom security-sbom-cyclonedx security-sbom-spdx security-sbom-validate
 
 # Go parameters
 GOCMD=go
@@ -11,6 +11,8 @@ GOVULNCHECK_CMD=GOTOOLCHAIN=go$(REQUIRED_GO_VERSION) $(GOCMD) run -a golang.org/
 GH_REPO=HexmosTech/git-lrc
 GH=/usr/bin/gh
 ENV_VARS=B2_KEY_ID B2_APP_KEY B2_BUCKET_NAME B2_BUCKET_ID
+SYFT_CMD=syft
+SBOM_DIR=security_issues/sbom
 
 # Build lrc for the current platform
 build:
@@ -205,6 +207,32 @@ security-secret-regression:
 	}
 	@rm -f /tmp/lrc-secret-regression.txt
 	@echo "✅ No known leaked B2 literals detected in tracked source/docs/scripts"
+
+# Generate SBOMs in both CycloneDX and SPDX formats from Go dependencies.
+security-sbom: security-sbom-cyclonedx security-sbom-spdx security-sbom-validate
+
+security-sbom-cyclonedx:
+	@command -v $(SYFT_CMD) >/dev/null 2>&1 || { \
+		echo "❌ syft not found. Install from https://github.com/anchore/syft"; \
+		exit 1; \
+	}
+	@mkdir -p $(SBOM_DIR)
+	@$(SYFT_CMD) file:go.mod -o cyclonedx-json=$(SBOM_DIR)/git-lrc-go-cyclonedx.json
+	@echo "✅ Wrote $(SBOM_DIR)/git-lrc-go-cyclonedx.json"
+
+security-sbom-spdx:
+	@command -v $(SYFT_CMD) >/dev/null 2>&1 || { \
+		echo "❌ syft not found. Install from https://github.com/anchore/syft"; \
+		exit 1; \
+	}
+	@mkdir -p $(SBOM_DIR)
+	@$(SYFT_CMD) file:go.mod -o spdx-json=$(SBOM_DIR)/git-lrc-go-spdx.json
+	@echo "✅ Wrote $(SBOM_DIR)/git-lrc-go-spdx.json"
+
+security-sbom-validate:
+	@test -s $(SBOM_DIR)/git-lrc-go-cyclonedx.json
+	@test -s $(SBOM_DIR)/git-lrc-go-spdx.json
+	@echo "✅ SBOM validation passed"
 
 check-status-doc:
 	bash scripts/check-status-doc-links.sh
