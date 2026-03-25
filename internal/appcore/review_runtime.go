@@ -27,7 +27,6 @@ import (
 	"github.com/HexmosTech/git-lrc/configpath"
 	"github.com/HexmosTech/git-lrc/interactive/input"
 	"github.com/HexmosTech/git-lrc/internal/appcore/decisionruntime"
-	"github.com/HexmosTech/git-lrc/internal/ctrlkey"
 	"github.com/HexmosTech/git-lrc/internal/decisionflow"
 	"github.com/HexmosTech/git-lrc/internal/reviewapi"
 	"github.com/HexmosTech/git-lrc/internal/reviewdb"
@@ -694,26 +693,26 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 			})
 			return true
 		}
-		stopCtrlS := make(chan struct{})
-		var stopCtrlSOnce sync.Once
-		stopCtrlSFn := func() { stopCtrlSOnce.Do(func() { close(stopCtrlS) }) }
+
+		prompt := decisionPrompt{
+			Title:       "Review in progress",
+			Description: "Choose terminal action now or continue waiting.",
+			AllowAbort:  true,
+			AllowSkip:   true,
+			AllowVouch:  true,
+		}
+		tuiDecisionCh, stopTUI, tuiDone := startTerminalDecisionBubbleTea(prompt)
+		go func() {
+			for code := range tuiDecisionCh {
+				submitInteractiveDecision(decisionruntime.SourceTerminal, code)
+			}
+		}()
 
 		// Ctrl-C -> abort commit
 		go func() {
 			<-sigChan
 			submitInteractiveDecision(decisionruntime.SourceSignal, decisionflow.DecisionAbort)
 		}()
-
-		// Ctrl-S -> skip review but still commit; Ctrl-C captured in raw mode fallback
-		go func() {
-			code, err := ctrlkey.HandleWithCancel(stopCtrlS, false)
-			if err == nil && code != 0 {
-				submitInteractiveDecision(decisionruntime.SourceTerminal, code)
-			}
-		}()
-
-		syncedPrintln("💡 Press Ctrl-C to abort, Ctrl-S to skip, or Ctrl-V/Ctrl-Y to vouch and commit")
-		syncedPrintln("")
 
 		// Poll concurrently and race with decisions
 		var pollResult *reviewmodel.DiffReviewResponse
@@ -741,19 +740,23 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 		var pollFinished bool
 		select {
 		case decisionCode = <-decisionChan:
-			stopCtrlSFn()
+			stopTUI()
+			<-tuiDone
 			stopPollFn()
 		case webDecision := <-webDecisionChan:
 			decisionCode = webDecision.code
 			decisionMessage = webDecision.message
 			decisionPush = webDecision.push
-			stopCtrlSFn()
+			stopTUI()
+			<-tuiDone
 			stopPollFn()
 		case <-pollDone:
 			pollFinished = true
 		}
 
 		if pollFinished {
+			stopTUI()
+			<-tuiDone
 			if pollUsedRecovery {
 				config = &pollUpdatedConfig
 			}
@@ -772,7 +775,6 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 			case <-time.After(300 * time.Millisecond):
 				// no decision quickly; proceed with poll result
 			}
-			stopCtrlSFn()
 			if pollErr != nil {
 				if errors.Is(pollErr, reviewapi.ErrPollCancelled) {
 					if decisionCode != -1 {
@@ -1860,25 +1862,6 @@ func openTTY() (*os.File, error) {
 	return input.OpenTTY()
 }
 
-// handleEnterFallbackWithCancel waits for a newline in cooked mode and maps it
-// to a commit decision. This is a fallback for terminals where raw key capture
-// cannot attach reliably.
-func handleEnterFallbackWithCancel(stop <-chan struct{}) (int, error) {
-	code, err := input.HandleEnterFallbackWithCancel(stop)
-	if errors.Is(err, input.ErrInputCancelled) {
-		return 0, reviewapi.ErrInputCancelled
-	}
-	if err != nil {
-		return 0, err
-	}
-	if code == input.DecisionCommit {
-		return decisionflow.DecisionCommit, nil
-	}
-	return 0, nil
-}
-
-// handleCtrlKeyWithCancel sets up raw terminal mode to detect Ctrl-S (skip), Ctrl-V (vouch), and Ctrl-C (abort).
-// Returns a decision code constant or 0 on cancellation/failure.
 // persistCommitMessage writes the desired commit message to a temporary file that the commit-msg hook will consume.
 func persistCommitMessage(commitMsgPath, message string) error {
 	if commitMsgPath == "" {
