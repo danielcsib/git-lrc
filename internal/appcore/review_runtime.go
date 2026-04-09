@@ -564,6 +564,10 @@ func runReviewWithOptions(opts reviewopts.Options) error {
 				state.ServeHTTP(w, r)
 			})
 
+			mux.HandleFunc("/api/runtime/usage-chip", func(w http.ResponseWriter, r *http.Request) {
+				handleRuntimeUsageChip(w, r, config, verbose)
+			})
+
 			if runningDraftHub != nil {
 				mux.HandleFunc("/api/draft", func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet {

@@ -213,8 +213,27 @@ func BuildApp(version, buildTime, gitCommit string, baseFlags, debugFlags []cli.
 				Action: h.RunAttestationTrailer,
 			},
 			{
-				Name:   "setup",
-				Usage:  "Guided onboarding — authenticate with Hexmos and configure LiveReview + AI",
+				Name:  "setup",
+				Usage: "Guided onboarding — authenticate with Hexmos and configure LiveReview + AI",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "api-url",
+						Aliases: []string{"base-url"},
+						Usage:   "override LiveReview API base URL for setup",
+					},
+					&cli.BoolFlag{
+						Name:  "yes",
+						Usage: "run non-interactively; requires explicit --keep-api-url or --replace-api-url when config already exists",
+					},
+					&cli.BoolFlag{
+						Name:  "keep-api-url",
+						Usage: "when config exists, preserve existing api_url",
+					},
+					&cli.BoolFlag{
+						Name:  "replace-api-url",
+						Usage: "when config exists, replace api_url with setup target URL",
+					},
+				},
 				Action: h.RunSetup,
 			},
 			{
