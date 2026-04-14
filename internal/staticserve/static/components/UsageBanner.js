@@ -1,4 +1,4 @@
-import { normalizeUsagePayload, planLabel } from '/static/components/usage_chip_model.mjs';
+import { normalizeUsagePayload } from '/static/components/usage_chip_model.mjs';
 
 const { html, useEffect, useState } = window.preact;
 
