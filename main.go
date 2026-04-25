@@ -25,7 +25,8 @@ var rootCmd = &cobra.Command{
 	Long: `git-lrc is a CLI tool that extends Git with last-recent-commit (LRC)
 workflows. It helps developers quickly inspect, compare, and act on
 the most recent commits across one or more repositories.`,
-	SilenceUsage: true,
+	SilenceUsage:  true,
+	SilenceErrors: true, // handle errors ourselves for cleaner output
 }
 
 // versionCmd prints build version information
