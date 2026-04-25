@@ -32,9 +32,11 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		LLMAPIKey:      os.Getenv("LLM_API_KEY"),
-		LLMModel:       getEnvWithDefault("LLM_MODEL", "gpt-4o"),
+		// Using gpt-4o-mini as default — cheaper and fast enough for commit messages.
+		LLMModel:       getEnvWithDefault("LLM_MODEL", "gpt-4o-mini"),
 		LLMAPIEndpoint: getEnvWithDefault("LLM_API_ENDPOINT", "https://api.openai.com/v1"),
-		MaxTokens:      512,
+		// 256 tokens is plenty for a commit message and keeps costs low.
+		MaxTokens:      256,
 	}
 
 	if err := cfg.validate(); err != nil {
