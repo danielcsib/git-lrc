@@ -33,7 +33,8 @@ the most recent commits across one or more repositories.`,
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
-	Aliases: []string{"v", "ver"}, // allow `git-lrc v` or `git-lrc ver` as shorthands
+	// NOTE: removed "v" alias since it conflicts with potential future verbose flag
+	Aliases: []string{"ver"},
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("git-lrc %s (commit: %s, built: %s)\n", Version, Commit, BuildDate)
 	},
