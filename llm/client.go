@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultTimeout    = 30 * time.Second
+	defaultTimeout    = 60 * time.Second // increased from 30s; slow networks were timing out
 	openAIAPIEndpoint = "https://api.openai.com/v1/chat/completions"
 )
 
@@ -70,7 +70,7 @@ func (c *Client) Complete(ctx context.Context, prompt string) (string, error) {
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.3,
-		MaxTokens:   512,
+		MaxTokens:   1024, // bumped from 512; longer diffs were getting truncated
 	}
 
 	payload, err := json.Marshal(reqBody)
