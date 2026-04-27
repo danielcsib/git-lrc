@@ -31,12 +31,12 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		LLMAPIKey:      os.Getenv("LLM_API_KEY"),
-		// Using gpt-4o-mini as default — cheaper and fast enough for commit messages.
-		LLMModel:       getEnvWithDefault("LLM_MODEL", "gpt-4o-mini"),
+		LLMAPIKey: os.Getenv("LLM_API_KEY"),
+		// Switched to gpt-4.1-nano — even cheaper and still great for short commit messages.
+		LLMModel:       getEnvWithDefault("LLM_MODEL", "gpt-4.1-nano"),
 		LLMAPIEndpoint: getEnvWithDefault("LLM_API_ENDPOINT", "https://api.openai.com/v1"),
-		// 256 tokens is plenty for a commit message and keeps costs low.
-		MaxTokens:      256,
+		// Bumped to 512 tokens to give the model a bit more room for detailed messages.
+		MaxTokens: 512,
 	}
 
 	if err := cfg.validate(); err != nil {
